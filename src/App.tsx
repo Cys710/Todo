@@ -85,7 +85,7 @@ function App() {
                   toggleWindowSize();
                 }
             }>
-            {isMiniMode ? '◀' : '▶'}
+            {isMiniMode ? '正常' : '迷你'}
           </button>
         </div>
         <nav className="nav-menu">

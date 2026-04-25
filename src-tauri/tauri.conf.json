@@ -15,7 +15,9 @@
         "title": "todo",
         "width": 720,
         "height": 600,
-        "resizable": true  
+        "resizable": true,
+        "transparent": true,
+        "decorations": false
       }
     ],
     "security": {
