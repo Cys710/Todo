@@ -9,6 +9,35 @@ import {
   LogicalSize,
 } from '@tauri-apps/api/window';
 
+const TODOS_STORAGE_KEY = 'todo.todos.v1';
+
+function isTodo(value: unknown): value is Todo {
+  if (!value || typeof value !== 'object') return false;
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.id === 'number' &&
+    typeof record.title === 'string' &&
+    typeof record.completed === 'boolean' &&
+    typeof record.category === 'string'
+  );
+}
+
+function loadTodosFromStorage(): Todo[] | null {
+  try {
+    const raw = window.localStorage.getItem(TODOS_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return null;
+    return parsed.every(isTodo) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveTodosToStorage(todos: Todo[]) {
+  window.localStorage.setItem(TODOS_STORAGE_KEY, JSON.stringify(todos));
+}
+
 // 定义待办事项的类型
 interface Todo {
   id: number;
@@ -22,8 +51,7 @@ type FilterType = 'all' | 'today' | 'week' | 'completed';
 // 主应用组件
 function App() {
   // 代办列表
-  const [todos, setTodos] = useState<Todo[]>([
-  ]);
+  const [todos, setTodos] = useState<Todo[]>(() => loadTodosFromStorage() ?? []);
   // 过滤器
   const [activeFilter, setActiveFilter] = useState<FilterType>('all');
   // 输入框新增待办事项
@@ -54,6 +82,14 @@ function App() {
     isEdgeCollapsedRef.current = isEdgeCollapsed;
   }, [isEdgeCollapsed]);
 
+  useEffect(() => {
+    try {
+      saveTodosToStorage(todos);
+    } catch {
+      // ignore storage errors (quota / unavailable)
+    }
+  }, [todos]);
+
   // 导航栏-配置(过滤)
   const filters: { key: FilterType; label: string }[] = [
     { key: 'all', label: '全部' },
@@ -77,18 +113,18 @@ function App() {
       completed: false,
       category: 'default',
     };
-    setTodos([...todos, newTodo]);
+    setTodos(prev => [...prev, newTodo]);
     setNewTodoTitle('');
   };
   // 状态切换
   const toggleTodo = (id: number) => {
-    setTodos(todos.map(todo => 
+    setTodos(prev => prev.map(todo => 
       todo.id === id ? { ...todo, completed: !todo.completed } : todo
     ));
   };
   // 删除代办
   const deleteTodo = (id: number) => {
-    setTodos(todos.filter(todo => todo.id !== id));
+    setTodos(prev => prev.filter(todo => todo.id !== id));
   };
   // ✅ 切换窗口大小（迷你模式 ↔ 正常模式）
   const toggleWindowSize = async () => {
@@ -328,16 +364,16 @@ function App() {
 
   const onSidebarPointerDownCapture = useCallback(
     (e: PointerEvent<HTMLElement>) => {
-      if (!isEdgeCollapsedRef.current) return;
+      if (!edgeCollapsedForUi) return;
       e.preventDefault();
       e.stopPropagation();
       void restoreFromEdge().finally(() => scheduleIdleRehide());
     },
-    [restoreFromEdge, scheduleIdleRehide]
+    [edgeCollapsedForUi, restoreFromEdge, scheduleIdleRehide]
   );
   //   返回的页面
   return (
-    <div className={`app-container ${isMiniMode ? 'mini-mode' : ''} ${isEdgeCollapsed ? 'edge-collapsed' : ''}`}>
+    <div className={`app-container ${isMiniMode ? 'mini-mode' : ''} ${edgeCollapsedForUi ? 'edge-collapsed' : ''}`}>
       {/* 左侧导航 */}
       <aside className="sidebar" onPointerDownCapture={onSidebarPointerDownCapture}>
         <div className="sidebar-header">
