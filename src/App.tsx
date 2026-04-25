@@ -145,6 +145,7 @@ function App() {
       const monitor = await currentMonitor();
       if (!monitor) return;
       lastScaleFactorRef.current = monitor.scaleFactor || 1;
+      lastScaleFactorRef.current = monitor.scaleFactor || 1;
 
       // 3. 获取窗口当前位置、大小
       const win = getCurrentWindow();
@@ -327,16 +328,16 @@ function App() {
 
   const onSidebarPointerDownCapture = useCallback(
     (e: PointerEvent<HTMLElement>) => {
-      if (!edgeCollapsedForUi) return;
+      if (!isEdgeCollapsedRef.current) return;
       e.preventDefault();
       e.stopPropagation();
       void restoreFromEdge().finally(() => scheduleIdleRehide());
     },
-    [edgeCollapsedForUi, restoreFromEdge, scheduleIdleRehide]
+    [restoreFromEdge, scheduleIdleRehide]
   );
   //   返回的页面
   return (
-    <div className={`app-container ${isMiniMode ? 'mini-mode' : ''} ${edgeCollapsedForUi ? 'edge-collapsed' : ''}`}>
+    <div className={`app-container ${isMiniMode ? 'mini-mode' : ''} ${isEdgeCollapsed ? 'edge-collapsed' : ''}`}>
       {/* 左侧导航 */}
       <aside className="sidebar" onPointerDownCapture={onSidebarPointerDownCapture}>
         <div className="sidebar-header">
