@@ -1,7 +1,13 @@
 // filepath: src/App.tsx
-import { useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type PointerEvent } from 'react';
 import './App.css';
-import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window';
+import {
+  PhysicalPosition,
+  PhysicalSize,
+  currentMonitor,
+  getCurrentWindow,
+  LogicalSize,
+} from '@tauri-apps/api/window';
 
 // 定义待办事项的类型
 interface Todo {
@@ -17,14 +23,35 @@ type FilterType = 'all' | 'today' | 'week' | 'completed';
 function App() {
   // 代办列表
   const [todos, setTodos] = useState<Todo[]>([
-    { id: 1, title: '完成项目报告', completed: false, category: 'work' },
-    { id: 2, title: '购买生活用品', completed: true, category: 'life' },
-    { id: 3, title: '健身锻炼', completed: false, category: 'health' },
   ]);
-  // 默认显示全部待办事项
+  // 过滤器
   const [activeFilter, setActiveFilter] = useState<FilterType>('all');
+  // 输入框新增待办事项
   const [newTodoTitle, setNewTodoTitle] = useState('');
+  // 迷你模式
   const [isMiniMode, setIsMiniMode] = useState(false);
+  // 靠边收起
+  const [isEdgeCollapsed, setIsEdgeCollapsed] = useState(false);
+
+  const isMiniModeRef = useRef(isMiniMode);
+  const isEdgeCollapsedRef = useRef(isEdgeCollapsed);
+  const programmaticMoveUntilRef = useRef(0);
+  const lastOuterSizeRef = useRef<PhysicalSize | null>(null);
+  const prevBoundsRef = useRef<{
+    position: PhysicalPosition;
+    size: PhysicalSize;
+  } | null>(null);
+  const moveTimerRef = useRef<number | null>(null);
+  const idleTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    isMiniModeRef.current = isMiniMode;
+  }, [isMiniMode]);
+
+  useEffect(() => {
+    isEdgeCollapsedRef.current = isEdgeCollapsed;
+  }, [isEdgeCollapsed]);
+
   // 导航栏-配置(过滤)
   const filters: { key: FilterType; label: string }[] = [
     { key: 'all', label: '全部' },
@@ -72,11 +99,182 @@ function App() {
       await win.setSize(new LogicalSize(350, 500));
     }
   };
+  // 恢复窗口位置和大小（从靠边收起状态）
+  const restoreFromEdge = useCallback(async () => {
+    const prev = prevBoundsRef.current;
+    if (!prev) return;
 
+    const win = getCurrentWindow();
+    programmaticMoveUntilRef.current = Date.now() + 400;
+    await win.setSize(prev.size);
+    await win.setPosition(prev.position);
+
+    prevBoundsRef.current = null;
+    setIsEdgeCollapsed(false);
+  }, []);
+
+  const collapseToEdge = useCallback(
+    async (side: 'left' | 'right') => {
+      // 1. 已经贴边了 / 不是迷你模式 → 直接退出
+      if (isEdgeCollapsedRef.current) return;
+      if (!isMiniModeRef.current) return;
+      if (idleTimerRef.current) window.clearTimeout(idleTimerRef.current);
+      idleTimerRef.current = null;
+      // 2. 获取当前显示器信息（尺寸、缩放比例）
+      const monitor = await currentMonitor();
+      if (!monitor) return;
+
+      // 3. 获取窗口当前位置、大小
+      const win = getCurrentWindow();
+      const position = await win.outerPosition();
+      const size = lastOuterSizeRef.current ?? (await win.outerSize());
+      // 4. 保存当前【位置 + 大小】，方便以后恢复
+      prevBoundsRef.current = { position, size };
+
+      const scaleFactor = monitor.scaleFactor || 1;
+      const collapsedWidthPhysical = Math.max(1, Math.round(60 * scaleFactor));
+      const workAreaLeft = monitor.workArea.position.x;
+      const workAreaRight = monitor.workArea.position.x + monitor.workArea.size.width;
+      const targetX = side === 'left' ? workAreaLeft : workAreaRight - collapsedWidthPhysical;
+
+      programmaticMoveUntilRef.current = Date.now() + 100;
+      await win.setSize(new PhysicalSize(collapsedWidthPhysical, size.height));
+      await win.setPosition(new PhysicalPosition(targetX, position.y));
+
+      setIsEdgeCollapsed(true);
+    },
+    [60]
+  );
+
+  const collapseIfNearEdge = useCallback(
+    async (positionOverride?: PhysicalPosition) => {
+      if (Date.now() < programmaticMoveUntilRef.current) return;
+      if (isEdgeCollapsedRef.current) return;
+      if (!isMiniModeRef.current) return;
+
+      const monitor = await currentMonitor();
+      if (!monitor) return;
+
+      const win = getCurrentWindow();
+      const position = positionOverride ?? (await win.outerPosition());
+      const size = lastOuterSizeRef.current ?? (await win.outerSize());
+
+      const threshold = 10;
+      const workLeft = monitor.workArea.position.x;
+      const workRight = monitor.workArea.position.x + monitor.workArea.size.width;
+
+      const leftGap = position.x - workLeft;
+      const rightGap = workRight - (position.x + size.width);
+
+      if (leftGap <= threshold) {
+        await collapseToEdge('left');
+      } else if (rightGap <= threshold) {
+        await collapseToEdge('right');
+      }
+    },
+    [collapseToEdge]
+  );
+
+  const scheduleIdleRehide = useCallback(() => {
+    if (idleTimerRef.current) window.clearTimeout(idleTimerRef.current);
+    idleTimerRef.current = null;
+
+    if (!isMiniModeRef.current) return;
+    if (isEdgeCollapsedRef.current) return;
+
+    idleTimerRef.current = window.setTimeout(() => {
+      void collapseIfNearEdge();
+    }, 6000);
+  }, [collapseIfNearEdge]);
+
+  useEffect(() => {
+    const win = getCurrentWindow();
+
+    let unlistenMoved: (() => void) | null = null;
+    let unlistenResized: (() => void) | null = null;
+    let unlistenFocus: (() => void) | null = null;
+
+    const setup = async () => {
+      lastOuterSizeRef.current = await win.outerSize();
+
+      unlistenResized = await win.onResized(({ payload: size }) => {
+        lastOuterSizeRef.current = size;
+        scheduleIdleRehide();
+      });
+
+      unlistenMoved = await win.onMoved(({ payload: position }) => {
+        if (Date.now() < programmaticMoveUntilRef.current) return;
+        if (isEdgeCollapsedRef.current) return;
+        if (!isMiniModeRef.current) return;
+
+        if (moveTimerRef.current) window.clearTimeout(moveTimerRef.current);
+        moveTimerRef.current = window.setTimeout(() => {
+          void (async () => {
+            await collapseIfNearEdge(position);
+            scheduleIdleRehide();
+          })();
+        }, 120);
+      });
+
+      unlistenFocus = await win.onFocusChanged(({ payload: focused }) => {
+        if (focused) {
+          scheduleIdleRehide();
+          return;
+        }
+        void collapseIfNearEdge();
+      });
+    };
+
+    void setup();
+
+    return () => {
+      if (moveTimerRef.current) window.clearTimeout(moveTimerRef.current);
+      if (idleTimerRef.current) window.clearTimeout(idleTimerRef.current);
+      unlistenMoved?.();
+      unlistenResized?.();
+      unlistenFocus?.();
+    };
+  }, [collapseIfNearEdge, scheduleIdleRehide]);
+
+  useEffect(() => {
+    if (!isMiniMode && isEdgeCollapsed) {
+      void restoreFromEdge();
+    }
+  }, [isMiniMode, isEdgeCollapsed, restoreFromEdge]);
+
+  useEffect(() => {
+    if (isMiniMode && !isEdgeCollapsed) {
+      scheduleIdleRehide();
+      return;
+    }
+    if (idleTimerRef.current) window.clearTimeout(idleTimerRef.current);
+    idleTimerRef.current = null;
+  }, [isMiniMode, isEdgeCollapsed, scheduleIdleRehide]);
+
+  useEffect(() => {
+    const onInteract = () => scheduleIdleRehide();
+    window.addEventListener('pointerdown', onInteract, { passive: true });
+    window.addEventListener('keydown', onInteract);
+    return () => {
+      window.removeEventListener('pointerdown', onInteract);
+      window.removeEventListener('keydown', onInteract);
+    };
+  }, [scheduleIdleRehide]);
+
+  const onSidebarPointerDownCapture = useCallback(
+    (e: PointerEvent<HTMLElement>) => {
+      if (!isEdgeCollapsedRef.current) return;
+      e.preventDefault();
+      e.stopPropagation();
+      void restoreFromEdge();
+    },
+    [restoreFromEdge]
+  );
+  //   返回的页面
   return (
-    <div className={`app-container ${isMiniMode ? 'mini-mode' : ''}`}>
+    <div className={`app-container ${isMiniMode ? 'mini-mode' : ''} ${isEdgeCollapsed ? 'edge-collapsed' : ''}`}>
       {/* 左侧导航 */}
-      <aside className="sidebar">
+      <aside className="sidebar" onPointerDownCapture={onSidebarPointerDownCapture}>
         <div className="sidebar-header">
           <h1>{isMiniMode ? '' : '待办清单'}</h1>
           <button className="mini-mode-btn" onClick={
