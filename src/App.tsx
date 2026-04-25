@@ -32,9 +32,11 @@ function App() {
   const [isMiniMode, setIsMiniMode] = useState(false);
   // 靠边收起
   const [isEdgeCollapsed, setIsEdgeCollapsed] = useState(false);
+  const [outerWidth, setOuterWidth] = useState<number | null>(null);
 
   const isMiniModeRef = useRef(isMiniMode);
   const isEdgeCollapsedRef = useRef(isEdgeCollapsed);
+  const lastScaleFactorRef = useRef(1);
   const programmaticMoveUntilRef = useRef(0);
   const lastOuterSizeRef = useRef<PhysicalSize | null>(null);
   const prevBoundsRef = useRef<{
@@ -101,17 +103,36 @@ function App() {
   };
   // 恢复窗口位置和大小（从靠边收起状态）
   const restoreFromEdge = useCallback(async () => {
-    const prev = prevBoundsRef.current;
-    if (!prev) return;
-
     const win = getCurrentWindow();
     programmaticMoveUntilRef.current = Date.now() + 400;
-    await win.setSize(prev.size);
-    await win.setPosition(prev.position);
 
-    prevBoundsRef.current = null;
-    setIsEdgeCollapsed(false);
+    const prev = prevBoundsRef.current;
+    try {
+      if (prev) {
+        await win.setSize(prev.size);
+        await win.setPosition(prev.position);
+        prevBoundsRef.current = null;
+      }
+    } finally {
+      setIsEdgeCollapsed(false);
+    }
   }, []);
+
+  const getCollapsedWidthPhysical = useCallback(
+    () => Math.max(1, Math.round(60 * (lastScaleFactorRef.current || 1))),
+    []
+  );
+
+  const getTolerancePhysical = useCallback(
+    () => Math.round(20 * (lastScaleFactorRef.current || 1)),
+    []
+  );
+
+  const edgeCollapsedForUi =
+    isEdgeCollapsed &&
+    (outerWidth === null
+      ? true
+      : outerWidth <= getCollapsedWidthPhysical() + getTolerancePhysical());
 
   const collapseToEdge = useCallback(
     async (side: 'left' | 'right') => {
@@ -123,6 +144,7 @@ function App() {
       // 2. 获取当前显示器信息（尺寸、缩放比例）
       const monitor = await currentMonitor();
       if (!monitor) return;
+      lastScaleFactorRef.current = monitor.scaleFactor || 1;
 
       // 3. 获取窗口当前位置、大小
       const win = getCurrentWindow();
@@ -131,8 +153,7 @@ function App() {
       // 4. 保存当前【位置 + 大小】，方便以后恢复
       prevBoundsRef.current = { position, size };
 
-      const scaleFactor = monitor.scaleFactor || 1;
-      const collapsedWidthPhysical = Math.max(1, Math.round(60 * scaleFactor));
+      const collapsedWidthPhysical = getCollapsedWidthPhysical();
       const workAreaLeft = monitor.workArea.position.x;
       const workAreaRight = monitor.workArea.position.x + monitor.workArea.size.width;
       const targetX = side === 'left' ? workAreaLeft : workAreaRight - collapsedWidthPhysical;
@@ -143,7 +164,7 @@ function App() {
 
       setIsEdgeCollapsed(true);
     },
-    [60]
+    [getCollapsedWidthPhysical]
   );
 
   const collapseIfNearEdge = useCallback(
@@ -195,10 +216,28 @@ function App() {
     let unlistenFocus: (() => void) | null = null;
 
     const setup = async () => {
-      lastOuterSizeRef.current = await win.outerSize();
+      const initialSize = await win.outerSize();
+      lastOuterSizeRef.current = initialSize;
+      setOuterWidth(initialSize.width);
+
+      const initialMonitor = await currentMonitor();
+      if (initialMonitor) lastScaleFactorRef.current = initialMonitor.scaleFactor || 1;
 
       unlistenResized = await win.onResized(({ payload: size }) => {
         lastOuterSizeRef.current = size;
+        setOuterWidth(size.width);
+        if (isEdgeCollapsedRef.current) {
+          void (async () => {
+            const monitor = await currentMonitor();
+            if (monitor) lastScaleFactorRef.current = monitor.scaleFactor || 1;
+            const collapsedWidthPhysical = getCollapsedWidthPhysical();
+            const tolerance = getTolerancePhysical();
+            if (size.width > collapsedWidthPhysical + tolerance) {
+              prevBoundsRef.current = null;
+              setIsEdgeCollapsed(false);
+            }
+          })();
+        }
         scheduleIdleRehide();
       });
 
@@ -243,6 +282,31 @@ function App() {
   }, [isMiniMode, isEdgeCollapsed, restoreFromEdge]);
 
   useEffect(() => {
+    if (!isEdgeCollapsed) return;
+
+    const win = getCurrentWindow();
+    const intervalId = window.setInterval(() => {
+      void (async () => {
+        const size = await win.outerSize();
+        lastOuterSizeRef.current = size;
+        setOuterWidth(size.width);
+
+        const monitor = await currentMonitor();
+        if (monitor) lastScaleFactorRef.current = monitor.scaleFactor || 1;
+
+        const collapsedWidthPhysical = getCollapsedWidthPhysical();
+        const tolerance = getTolerancePhysical();
+        if (size.width > collapsedWidthPhysical + tolerance) {
+          prevBoundsRef.current = null;
+          setIsEdgeCollapsed(false);
+        }
+      })();
+    }, 1000);
+
+    return () => window.clearInterval(intervalId);
+  }, [isEdgeCollapsed, getCollapsedWidthPhysical, getTolerancePhysical]);
+
+  useEffect(() => {
     if (isMiniMode && !isEdgeCollapsed) {
       scheduleIdleRehide();
       return;
@@ -263,16 +327,16 @@ function App() {
 
   const onSidebarPointerDownCapture = useCallback(
     (e: PointerEvent<HTMLElement>) => {
-      if (!isEdgeCollapsedRef.current) return;
+      if (!edgeCollapsedForUi) return;
       e.preventDefault();
       e.stopPropagation();
-      void restoreFromEdge();
+      void restoreFromEdge().finally(() => scheduleIdleRehide());
     },
-    [restoreFromEdge]
+    [edgeCollapsedForUi, restoreFromEdge, scheduleIdleRehide]
   );
   //   返回的页面
   return (
-    <div className={`app-container ${isMiniMode ? 'mini-mode' : ''} ${isEdgeCollapsed ? 'edge-collapsed' : ''}`}>
+    <div className={`app-container ${isMiniMode ? 'mini-mode' : ''} ${edgeCollapsedForUi ? 'edge-collapsed' : ''}`}>
       {/* 左侧导航 */}
       <aside className="sidebar" onPointerDownCapture={onSidebarPointerDownCapture}>
         <div className="sidebar-header">
