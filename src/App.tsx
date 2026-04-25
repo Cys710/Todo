@@ -1,6 +1,7 @@
 // filepath: src/App.tsx
 import { useState } from 'react';
 import './App.css';
+import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window';
 
 // 定义待办事项的类型
 interface Todo {
@@ -23,6 +24,7 @@ function App() {
   // 默认显示全部待办事项
   const [activeFilter, setActiveFilter] = useState<FilterType>('all');
   const [newTodoTitle, setNewTodoTitle] = useState('');
+  const [isMiniMode, setIsMiniMode] = useState(false);
   // 导航栏-配置(过滤)
   const filters: { key: FilterType; label: string }[] = [
     { key: 'all', label: '全部' },
@@ -59,16 +61,35 @@ function App() {
   const deleteTodo = (id: number) => {
     setTodos(todos.filter(todo => todo.id !== id));
   };
+  // ✅ 切换窗口大小（迷你模式 ↔ 正常模式）
+  const toggleWindowSize = async () => {
+    const win = getCurrentWindow();
+    if (isMiniMode) {
+      // 退出迷你模式 → 变大
+      await win.setSize(new LogicalSize(720, 600));
+    } else {
+      // 进入迷你模式 → 变小
+      await win.setSize(new LogicalSize(350, 500));
+    }
+  };
 
   return (
-    <div className="app-container">
+    <div className={`app-container ${isMiniMode ? 'mini-mode' : ''}`}>
       {/* 左侧导航 */}
       <aside className="sidebar">
         <div className="sidebar-header">
-          <h1>待办清单</h1>
+          <h1>{isMiniMode ? '' : '待办清单'}</h1>
+          <button className="mini-mode-btn" onClick={
+                () => {
+                  setIsMiniMode(!isMiniMode);
+                  toggleWindowSize();
+                }
+            }>
+            {isMiniMode ? '◀' : '▶'}
+          </button>
         </div>
         <nav className="nav-menu">
-          // 遍历过滤配置生成导航按钮
+          {/* 遍历过滤配置生成导航按钮 */}
           {filters.map(filter => (
             <button
               key={filter.key}
@@ -117,7 +138,7 @@ function App() {
             className="new-todo-input"
           />
           <button className="add-btn" onClick={addTodo}>
-            添加待办
+            {isMiniMode ? '添加' : '添加代办'}
           </button>
         </div>
       </main>

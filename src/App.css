@@ -17,7 +17,7 @@ body {
 
 /* 左侧导航 */
 .sidebar {
-  width: 200px;
+  width: 120px;
   background-color: #2c3e50;
   color: white;
   padding: 20px 0;
@@ -188,4 +188,96 @@ body {
 
 .add-btn:hover {
   background-color: #2980b9;
+}
+
+/* 迷你模式按钮 */
+.mini-mode-btn {
+  display: block;
+  width: 100%;
+  margin-top: 15px;
+  padding: 8px;
+  background-color: rgba(255, 255, 255, 0.1);
+  border: none;
+  border-radius: 6px;
+  color: white;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.mini-mode-btn:hover {
+  background-color: rgba(255, 255, 255, 0.2);
+}
+
+/* 迷你模式 - 整体变窄且透明 */
+.app-container.mini-mode {
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+.app-container.mini-mode .sidebar {
+  width: 60px;
+  padding: 15px 5px;
+}
+
+.app-container.mini-mode .sidebar-header {
+  padding: 0 5px 15px;
+  border-bottom: none;
+  text-align: center;
+}
+
+.app-container.mini-mode .sidebar-header h1 {
+  font-size: 12px;
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  transform: rotate(180deg);
+  white-space: nowrap;
+}
+
+.app-container.mini-mode .mini-mode-btn {
+  margin-top: 10px;
+}
+
+.app-container.mini-mode .nav-menu {
+  padding-top: 10px;
+}
+
+.app-container.mini-mode .nav-item {
+  padding: 10px 5px;
+  font-size: 12px;
+  text-align: center;
+}
+
+.app-container.mini-mode .main-content {
+  opacity: 0.75;
+}
+
+.app-container.mini-mode .content-header {
+  padding: 15px 20px;
+}
+
+.app-container.mini-mode .content-header h2 {
+  font-size: 18px;
+}
+
+.app-container.mini-mode .todo-list {
+  padding: 15px 20px;
+}
+
+.app-container.mini-mode .todo-item {
+  padding: 10px 12px;
+}
+
+.app-container.mini-mode .bottom-actions {
+  padding: 15px 20px;
+}
+
+.app-container.mini-mode .new-todo-input {
+  padding: 10px 12px;
+  font-size: 12px;
+}
+
+.app-container.mini-mode .add-btn {
+  padding: 10px 16px;
+  font-size: 12px;
 }
